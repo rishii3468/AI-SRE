@@ -1,0 +1,27 @@
+# LangChain Core
+langchain==0.3.26
+langchain-community==0.3.27
+langchain-huggingface==0.3.0
+langchain-chroma==0.2.5
+
+# Vector Database
+chromadb==1.0.15
+
+# Embeddings
+sentence-transformers==5.0.0
+transformers==4.53.2
+torch==2.7.1
+
+# Local LLM
+ollama==0.5.1
+
+# Frontend
+streamlit==1.46.1
+
+# Data Processing
+pandas==2.3.0
+numpy==2.3.1
+
+# Utilities
+python-dotenv==1.1.1
+plotly==6.2.0
