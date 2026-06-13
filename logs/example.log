@@ -1,0 +1,48 @@
+2026-06-13T10:00:01.112Z INFO  api-gateway     Service startup complete
+2026-06-13T10:00:15.447Z INFO  auth-service    Authentication service healthy
+2026-06-13T10:00:22.883Z INFO  redis-client    Connected to Redis cluster
+
+2026-06-13T10:01:03.128Z WARN  redis-client    Connection acquisition timeout after 5000ms
+2026-06-13T10:01:04.002Z WARN  redis-client    Connection pool utilization 92%
+2026-06-13T10:01:08.551Z WARN  redis-client    Connection pool utilization 97%
+
+2026-06-13T10:01:15.743Z ERROR redis-client    Redis command GET session:98765 failed: timeout
+2026-06-13T10:01:18.229Z ERROR redis-client    Redis command GET session:22134 failed: timeout
+2026-06-13T10:01:21.116Z ERROR redis-client    Redis command GET session:11287 failed: timeout
+
+2026-06-13T10:02:02.887Z WARN  auth-service    Session lookup latency exceeded threshold: 3200ms
+2026-06-13T10:02:10.544Z WARN  auth-service    Session lookup latency exceeded threshold: 4100ms
+
+2026-06-13T10:03:04.132Z ERROR auth-service    User authentication failed: session validation timeout
+2026-06-13T10:03:08.441Z ERROR auth-service    User authentication failed: session validation timeout
+2026-06-13T10:03:15.220Z ERROR auth-service    User authentication failed: session validation timeout
+2026-06-13T10:03:20.761Z WARN  auth-service    Authentication failure rate increased to 24%
+
+2026-06-13T10:04:01.003Z WARN  api-gateway     Request latency p95 exceeded 2000ms
+2026-06-13T10:04:06.217Z WARN  api-gateway     Request latency p95 exceeded 3500ms
+2026-06-13T10:04:10.998Z WARN  api-gateway     Request latency p99 exceeded 5000ms
+
+2026-06-13T10:04:22.884Z ERROR api-gateway     HTTP 503 returned for /api/orders
+2026-06-13T10:04:23.005Z ERROR api-gateway     HTTP 503 returned for /api/products
+2026-06-13T10:04:24.118Z ERROR api-gateway     HTTP 503 returned for /api/profile
+
+2026-06-13T10:05:01.661Z ALERT monitoring      Critical alert triggered: API Availability < 95%
+2026-06-13T10:05:02.892Z ALERT monitoring      Critical alert triggered: Authentication Failure Rate > 20%
+
+2026-06-13T10:05:30.115Z INFO  sre-bot         Incident declared: SEV-1
+2026-06-13T10:06:10.774Z INFO  operator        Investigating Redis connection pool saturation
+
+2026-06-13T10:07:04.111Z WARN  redis-client    Connection pool utilization 100%
+2026-06-13T10:07:05.332Z ERROR redis-client    No available connections in pool
+
+2026-06-13T10:08:11.772Z INFO  operator        Restart initiated for Redis primary node
+2026-06-13T10:08:45.190Z INFO  redis-client    Redis connections re-established
+2026-06-13T10:08:48.004Z INFO  redis-client    Connection pool utilization reduced to 34%
+
+2026-06-13T10:09:15.112Z INFO  auth-service    Session validation latency returned to normal
+2026-06-13T10:09:40.887Z INFO  api-gateway     Request latency p95 returned below threshold
+
+2026-06-13T10:10:01.223Z INFO  monitoring      Authentication failure rate normalized
+2026-06-13T10:10:15.554Z INFO  monitoring      API availability restored to 99.8%
+
+2026-06-13T10:10:45.119Z INFO  sre-bot         Incident resolved
