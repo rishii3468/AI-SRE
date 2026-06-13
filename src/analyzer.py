@@ -128,59 +128,6 @@ def _default_ollama_model() -> str:
 # 		return None
 # 	return parsed
 
-def _call_ollama(prompt: str, model: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """Ask Ollama for a structured incident analysis response.
-
-    The function returns a dictionary when the model responds with JSON.
-    If Ollama is unavailable or returns unparseable text, the caller can fall
-    back to the deterministic analysis already used by the app.
-    """
-
-    if ollama is None:
-        return None
-
-    model_name = model or _default_ollama_model()
-    system_message = (
-        "You are a senior SRE incident commander. Return ONLY valid JSON with the keys "
-        "root_cause, confidence, evidence, recommended_actions, suspected_category. "
-        "confidence must be an integer between 0 and 100. evidence and recommended_actions must be arrays of strings."
-    )
-    
-    try:
-        # Request generation from Ollama
-        response = ollama.chat(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": prompt},
-            ],
-
-        )
-        
-        # FIX: Handle ChatResponse object properties safely instead of assuming a dict
-        if hasattr(response, 'message') and hasattr(response.message, 'content'):
-            content = response.message.content
-        elif isinstance(response, dict):
-            # Fallback if an older wrapper version or custom dict wrapper is active
-            content = response.get("message", {}).get("content")
-        else:
-            return None
-
-        if not content:
-            return None
-
-        # Parse the JSON string from the model response
-        parsed = json.loads(content)
-        
-        if not isinstance(parsed, dict):
-            return None
-            
-        return parsed
-
-    except (json.JSONDecodeError, Exception) as e:
-        # Catch connection errors, timeouts, or JSON parsing anomalies safely
-        print(f"Ollama invocation or parsing failed: {e}")
-        return None
 
 def _select_candidate(summary: dict[str, Any]) -> str:
 	category_counts = summary.get("category_counts", {}) or {}

@@ -7,7 +7,7 @@ from typing import Any
 
 import pandas as pd
 
-from analyzer import IncidentAnalysis, analysis_to_dict, _call_ollama
+from analyzer import IncidentAnalysis, analysis_to_dict
 from timeline import format_timeline_markdown
 
 import ollama
