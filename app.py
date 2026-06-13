@@ -12,6 +12,11 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+try:
+	import ollama
+except ImportError:  # pragma: no cover - handled by UI fallback
+	ollama = None
+
 
 ROOT_DIR = Path(__file__).resolve().parent
 SRC_DIR = ROOT_DIR / "src"
@@ -195,6 +200,60 @@ def warm_vector_store() -> Optional[object]:
 		return None
 
 
+@st.cache_data(show_spinner=False, ttl=10)
+def check_ollama_status(model_name: str | None = None) -> dict[str, object]:
+	"""Check whether the local Ollama server is reachable and the chosen model exists."""
+
+	if ollama is None:
+		return {
+			"reachable": False,
+			"model_available": False,
+			"message": "Ollama Python client is not installed.",
+		}
+
+	try:
+		models_response = ollama.list()
+		reachable = True
+	except Exception as exc:
+		return {
+			"reachable": False,
+			"model_available": False,
+			"message": f"Ollama server is not reachable: {exc}",
+		}
+
+	available_models: list[str] = []
+	if isinstance(models_response, dict):
+		models = models_response.get("models", [])
+		for item in models if isinstance(models, list) else []:
+			if isinstance(item, dict):
+				name = item.get("name")
+				if name:
+					available_models.append(str(name))
+					continue
+				model_name_value = item.get("model")
+				if model_name_value:
+					available_models.append(str(model_name_value))
+	elif hasattr(models_response, "models"):
+		for item in getattr(models_response, "models", []):
+			name = getattr(item, "name", None) or getattr(item, "model", None)
+			if name:
+				available_models.append(str(name))
+
+	selected_model = (model_name or "").strip()
+	model_available = not selected_model or any(selected_model in available for available in available_models)
+	if not model_available and selected_model:
+		message = f"Ollama is reachable, but {selected_model} is not listed locally."
+	else:
+		message = "Ollama is reachable and ready."
+
+	return {
+		"reachable": reachable,
+		"model_available": model_available,
+		"message": message,
+		"available_models": available_models[:8],
+	}
+
+
 def make_metric(label: str, value: str, subtext: str) -> str:
 	return f"""
 	<div class="metric-card">
@@ -276,6 +335,21 @@ def build_app_sidebar() -> dict[str, object]:
 	top_k = st.sidebar.slider("Retrieved runbooks", 1, 8, 4)
 	minimum_severity = st.sidebar.selectbox("Focus on severity", ["INFO", "WARNING", "ERROR", "CRITICAL"], index=2)
 	use_llm = st.sidebar.toggle("Enable LLM prompt generation", value=False)
+	ollama_model = st.sidebar.text_input("Ollama model", value="qwen2.5:7b", help="Example: qwen2.5:7b or llama3.1:8b")
+	ollama_status = check_ollama_status(ollama_model if use_llm else None)
+	st.sidebar.markdown("### Ollama Status")
+	if not use_llm:
+		st.sidebar.info("LLM mode is off. Ollama is not checked until you enable it.")
+	elif not ollama_status["reachable"]:
+		st.sidebar.error(str(ollama_status["message"]))
+	else:
+		if ollama_status["model_available"]:
+			st.sidebar.success(str(ollama_status["message"]))
+		else:
+			st.sidebar.warning(str(ollama_status["message"]))
+		available_models = ollama_status.get("available_models", [])
+		if available_models:
+			st.sidebar.caption("Available models: " + ", ".join(available_models))
 	build_store = st.sidebar.button("Build / refresh vector store")
 
 	return {
@@ -286,6 +360,8 @@ def build_app_sidebar() -> dict[str, object]:
 		"top_k": top_k,
 		"minimum_severity": minimum_severity,
 		"use_llm": use_llm,
+		"ollama_model": ollama_model.strip(),
+		"ollama_status": ollama_status,
 		"build_store": build_store,
 	}
 
@@ -331,7 +407,12 @@ def main() -> None:
 		threshold_frame = threshold_frame.loc[threshold_frame["severity_rank"] >= threshold_value].drop(columns=["severity_rank"])
 
 	runbook_hits = retrieve_runbooks(sidebar_state["query"], k=sidebar_state["top_k"])
-	analysis = analyze_incident(threshold_frame, runbook_hits=runbook_hits, use_llm=bool(sidebar_state["use_llm"]))
+	analysis = analyze_incident(
+		threshold_frame,
+		runbook_hits=runbook_hits,
+		use_llm=bool(sidebar_state["use_llm"]),
+		ollama_model=sidebar_state["ollama_model"] or None,
+	)
 	analysis_dict = analysis.__dict__ if hasattr(analysis, "__dict__") else analysis
 
 	left, right = st.columns([1.15, 0.85], gap="large")
