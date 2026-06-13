@@ -33,7 +33,7 @@ from timeline import build_timeline, format_timeline_markdown
 
 
 st.set_page_config(
-	page_title="AI Incident Commander",
+	page_title="AI SRE",
 	page_icon="🧭",
 	layout="wide",
 	initial_sidebar_state="expanded",
@@ -365,7 +365,7 @@ def main() -> None:
 	st.markdown(
 		"""
 		<div class="hero">
-			<h1>AI Incident Commander</h1>
+			<h1>AI SRE</h1>
 			<p>Upload incident logs and turn them into timelines, runbook matches, root-cause hypotheses, and postmortem-ready reports.</p>
 		</div>
 		""",
@@ -441,7 +441,13 @@ def main() -> None:
 		for item in analysis_dict.get("evidence", []):
 			st.markdown(f'<div class="evidence-box">{item}</div>', unsafe_allow_html=True)
 
-	tabs = st.tabs(["Runbooks", "Postmortem", "Raw Data"])
+
+	# ADDED: "📋 Recommended Actions" added alongside your other operational views
+	tabs = st.tabs([
+		"Runbooks", 
+		"Postmortem", 
+		"Raw Data"
+	])
 
 	with tabs[0]:
 		st.markdown('<div class="panel"><h2>Retrieved Runbooks</h2></div>', unsafe_allow_html=True)
@@ -459,14 +465,22 @@ def main() -> None:
 
 	with tabs[1]:
 		st.markdown('<div class="panel"><h2>Postmortem Draft</h2></div>', unsafe_allow_html=True)
-		postmortem_md = build_postmortem_markdown(analysis, timeline_frame)
+		
+		with st.spinner("Analyzing incident logs and drafting report..."):
+			postmortem_md = build_postmortem_markdown(analysis, timeline_frame)
+		
 		st.download_button(
-			"Download postmortem markdown",
+			label="Download postmortem markdown",
 			data=postmortem_md,
 			file_name="incident_postmortem.md",
 			mime="text/markdown",
 		)
-		st.markdown(postmortem_md)
+		
+		st.divider() 
+		
+		# Wrapping text securely inside explicit markdown parser structures
+		st.markdown(f"{postmortem_md}")
+
 
 	with tabs[2]:
 		st.markdown('<div class="panel"><h2>Parsed Records</h2></div>', unsafe_allow_html=True)
@@ -475,5 +489,7 @@ def main() -> None:
 		st.code(format_timeline_markdown(incident_frame), language="markdown")
 
 
+	
 if __name__ == "__main__":
 	main()
+

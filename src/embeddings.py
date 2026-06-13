@@ -85,7 +85,10 @@ def build_embeddings(model_name: str = DEFAULT_EMBEDDING_MODEL) -> HuggingFaceEm
     return HuggingFaceEmbeddings(
         model_name=model_name,
         model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
+        encode_kwargs={
+            "device": "cpu",                  # Force sentence_transformers encoder loop to CPU
+            "normalize_embeddings": True
+        },
     )
 
 

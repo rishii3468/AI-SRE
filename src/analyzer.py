@@ -86,48 +86,101 @@ def _build_llm_payload(
 
 
 def _default_ollama_model() -> str:
-	return os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+	return os.getenv("OLLAMA_MODEL", "gemma3:1b")
 
 
-def _call_ollama(prompt: str, model: str | None = None) -> dict[str, Any] | None:
-	"""Ask Ollama for a structured incident analysis response.
+# def _call_ollama(prompt: str, model: str | None = None) -> dict[str, Any] | None:
+# 	"""Ask Ollama for a structured incident analysis response.
 
-	The function returns a dictionary when the model responds with JSON.
-	If Ollama is unavailable or returns unparseable text, the caller can fall
-	back to the deterministic analysis already used by the app.
-	"""
+# 	The function returns a dictionary when the model responds with JSON.
+# 	If Ollama is unavailable or returns unparseable text, the caller can fall
+# 	back to the deterministic analysis already used by the app.
+# 	"""
 
-	if ollama is None:
-		return None
+# 	if ollama is None:
+# 		return None
 
-	model_name = model or _default_ollama_model()
-	system_message = (
-		"You are a senior SRE incident commander. Return ONLY valid JSON with the keys "
-		"root_cause, confidence, evidence, recommended_actions, suspected_category. "
-		"confidence must be an integer between 0 and 100. evidence and recommended_actions must be arrays of strings."
-	)
-	response = ollama.chat(
-		model=model_name,
-		messages=[
-			{"role": "system", "content": system_message},
-			{"role": "user", "content": prompt},
-		],
-		format="json",
-	)
-	message = response.get("message", {}) if isinstance(response, dict) else {}
-	content = message.get("content") if isinstance(message, dict) else None
-	if not content:
-		return None
+# 	model_name = model or _default_ollama_model()
+# 	system_message = (
+# 		"You are a senior SRE incident commander. Return ONLY valid JSON with the keys "
+# 		"root_cause, confidence, evidence, recommended_actions, suspected_category. "
+# 		"confidence must be an integer between 0 and 100. evidence and recommended_actions must be arrays of strings."
+# 	)
+# 	response = ollama.chat(
+# 		model=model_name,
+# 		messages=[
+# 			{"role": "system", "content": system_message},
+# 			{"role": "user", "content": prompt},
+# 		],
+# 		format="json",
+# 	)
+# 	message = response.get("message", {}) if isinstance(response, dict) else {}
+# 	content = message.get("content") if isinstance(message, dict) else None
+# 	if not content:
+# 		return None
 
-	try:
-		parsed = json.loads(content)
-	except json.JSONDecodeError:
-		return None
+# 	try:
+# 		parsed = json.loads(content)
+# 	except json.JSONDecodeError:
+# 		return None
 
-	if not isinstance(parsed, dict):
-		return None
-	return parsed
+# 	if not isinstance(parsed, dict):
+# 		return None
+# 	return parsed
 
+def _call_ollama(prompt: str, model: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Ask Ollama for a structured incident analysis response.
+
+    The function returns a dictionary when the model responds with JSON.
+    If Ollama is unavailable or returns unparseable text, the caller can fall
+    back to the deterministic analysis already used by the app.
+    """
+
+    if ollama is None:
+        return None
+
+    model_name = model or _default_ollama_model()
+    system_message = (
+        "You are a senior SRE incident commander. Return ONLY valid JSON with the keys "
+        "root_cause, confidence, evidence, recommended_actions, suspected_category. "
+        "confidence must be an integer between 0 and 100. evidence and recommended_actions must be arrays of strings."
+    )
+    
+    try:
+        # Request generation from Ollama
+        response = ollama.chat(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": prompt},
+            ],
+
+        )
+        
+        # FIX: Handle ChatResponse object properties safely instead of assuming a dict
+        if hasattr(response, 'message') and hasattr(response.message, 'content'):
+            content = response.message.content
+        elif isinstance(response, dict):
+            # Fallback if an older wrapper version or custom dict wrapper is active
+            content = response.get("message", {}).get("content")
+        else:
+            return None
+
+        if not content:
+            return None
+
+        # Parse the JSON string from the model response
+        parsed = json.loads(content)
+        
+        if not isinstance(parsed, dict):
+            return None
+            
+        return parsed
+
+    except (json.JSONDecodeError, Exception) as e:
+        # Catch connection errors, timeouts, or JSON parsing anomalies safely
+        print(f"Ollama invocation or parsing failed: {e}")
+        return None
 
 def _select_candidate(summary: dict[str, Any]) -> str:
 	category_counts = summary.get("category_counts", {}) or {}
