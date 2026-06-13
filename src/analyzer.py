@@ -135,6 +135,7 @@ def analyze_incident(
 
 	if use_llm:
 		# The project can plug an Ollama client here later; the deterministic
+		
 		# result remains the baseline so the app works offline.
 		prompt = build_root_cause_prompt(
 			incident_summary=summary,
