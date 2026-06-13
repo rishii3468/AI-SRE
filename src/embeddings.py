@@ -79,16 +79,15 @@ def runbook_chunks_to_documents(chunks: Iterable[RunbookChunk]) -> list[Document
 
 
 def build_embeddings(model_name: str = DEFAULT_EMBEDDING_MODEL) -> HuggingFaceEmbeddings:
-	"""Create the embedding model used for the runbook vector store.
-	
-	Uses CPU device explicitly to avoid PyTorch meta tensor issues.
-	"""
+    """Create the embedding model used for the runbook vector store.
+    Uses CPU device explicitly to avoid PyTorch meta tensor issues.
+    """
+    return HuggingFaceEmbeddings(
+        model_name=model_name,
+        model_kwargs={"device": "cpu"},
+        encode_kwargs={"normalize_embeddings": True},
+    )
 
-	return HuggingFaceEmbeddings(
-		model_name=model_name,
-		model_kwargs={"device": "cpu"},
-		encode_kwargs={"normalize_embeddings": True},
-	)
 
 
 def build_vector_store(

@@ -68,6 +68,7 @@ class IncidentAnalysis:
 	incident_window: tuple[str | None, str | None]
 	summary: dict[str, Any]
 	timeline: list[dict[str, Any]]
+	impact: str
 
 
 def _build_llm_payload(
@@ -159,14 +160,88 @@ def _build_evidence(frame: pd.DataFrame, limit: int = 5) -> list[str]:
 	return evidence
 
 
-def _confidence_from_frame(frame: pd.DataFrame, category: str) -> int:
+def _calculate_impact(frame: pd.DataFrame, summary: dict[str, Any]) -> str:
+	"""Calculate incident impact description based on event severity and volume."""
+	if frame.empty:
+		return "Minimal impact - insufficient data"
+	
+	critical_count = summary.get("critical_events", 0)
+	total_count = summary.get("total_events", 0)
+	
+	# Calculate impact severity
+	if critical_count == 0:
+		return "Minimal impact - no critical events detected"
+	elif critical_count >= 10:
+		return f"Severe impact - {critical_count} critical events indicate widespread service degradation"
+	elif critical_count >= 5:
+		return f"High impact - {critical_count} critical events affecting multiple services"
+	elif critical_count >= 2:
+		return f"Moderate impact - {critical_count} critical events detected, localized to specific components"
+	else:
+		return f"Low impact - {critical_count} critical event(s) with limited scope"
+
+
+def _confidence_from_frame(frame: pd.DataFrame, category: str, summary: dict[str, Any] | None = None) -> int:
+	"""Calculate confidence based on evidence quality and category match.
+	
+	Factors:
+	- Percentage of categorized events matching the suspected category
+	- Presence of critical/error severity events
+	- Event clustering (multiple events of same category)
+	- Total event count (more events = higher confidence)
+	"""
 	if frame.empty:
 		return 25
 
-	severity_boost = 10 if any(str(value).upper() in {"ERROR", "CRITICAL"} for value in frame.get("severity", [])) else 0
-	category_hits = int((frame.get("category") == category).sum()) if "category" in frame else 0
-	confidence = 35 + min(25, category_hits * 5) + severity_boost
-	return max(20, min(95, confidence))
+	# Get summary if not provided
+	if summary is None:
+		summary = build_operational_snapshot(frame).get("summary", {})
+	
+	total_events = len(frame)
+	critical_events = summary.get("critical_events", 0)
+	
+	# Base confidence increases with event count (more data = more confidence)
+	if total_events >= 20:
+		base_confidence = 50
+	elif total_events >= 10:
+		base_confidence = 45
+	elif total_events >= 5:
+		base_confidence = 40
+	else:
+		base_confidence = 35
+	
+	# Severity multiplier
+	severity_boost = 15 if any(str(value).upper() in {"ERROR", "CRITICAL"} for value in frame.get("severity", [])) else 5
+	
+	# Category match confidence
+	if "category" not in frame.columns or "is_critical" not in frame.columns:
+		category_boost = 5
+	else:
+		critical_frame = frame[frame["is_critical"]]
+		if not critical_frame.empty:
+			category_critical_count = int((critical_frame["category"] == category).sum())
+			total_critical = len(critical_frame)
+			category_percentage = (category_critical_count / total_critical * 100) if total_critical > 0 else 0
+			
+			if category_percentage >= 70:
+				category_boost = 20
+			elif category_percentage >= 50:
+				category_boost = 15
+			elif category_percentage >= 30:
+				category_boost = 10
+			else:
+				category_boost = 5
+			
+			# Event clustering bonus
+			if category_critical_count >= 3:
+				category_boost += 10
+			elif category_critical_count >= 2:
+				category_boost += 5
+		else:
+			category_boost = 5
+	
+	confidence = base_confidence + severity_boost + category_boost
+	return max(25, min(95, confidence))
 
 
 def _get_meaningful_query_for_category(frame: pd.DataFrame, category: str) -> str:
@@ -211,13 +286,22 @@ def analyze_incident(
 	summary = snapshot["summary"]
 	category = _select_candidate(summary)
 
+	# Get top events for better root cause insight
+	top_events = milestone_events(frame, limit=3)
 	top_message = None
+	
+	# First, try to get message from category table
 	category_table = snapshot.get("category_table", [])
 	if category_table:
 		top_message = category_table[0].get("sample_message")
+	
+	# If we don't have a good top message, use the first milestone event
+	if not top_message and top_events:
+		top_message = top_events[0].get("message", "")
 
 	root_cause, remediation = _fallback_root_cause(category, top_message)
-	confidence = _confidence_from_frame(frame, category)
+	confidence = _confidence_from_frame(frame, category, summary)
+	impact = _calculate_impact(frame, summary)
 	evidence = _build_evidence(frame)
 
 	if runbook_hits:
@@ -253,6 +337,7 @@ def analyze_incident(
 		incident_window=(start.isoformat() if start is not None else None, end.isoformat() if end is not None else None),
 		summary=summary,
 		timeline=milestone_events(frame),
+		impact=impact,
 	)
 
 

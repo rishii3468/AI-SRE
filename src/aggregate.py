@@ -145,7 +145,7 @@ class EventSummary:
 
 def categorize_message(message: str) -> str:
 	"""Map a raw message to a coarse incident category."""
-
+	
 	lowered = message.lower()
 	for category, keywords in EVENT_CATEGORY_KEYWORDS.items():
 		if any(keyword in lowered for keyword in keywords):

@@ -429,6 +429,9 @@ def main() -> None:
 		st.markdown('<div class="panel"><h2>Analysis</h2></div>', unsafe_allow_html=True)
 		st.metric("Suspected category", analysis_dict.get("suspected_category", "uncategorized"))
 		st.metric("Confidence", f"{analysis_dict.get('confidence', 0)}%")
+		st.markdown("#### Impact")
+		st.write(analysis_dict.get("impact", "Impact not determined."))
+		st.markdown("#### Root Cause")
 		st.write(analysis_dict.get("root_cause", "No root cause available."))
 		st.markdown("#### Recommended actions")
 		for action in analysis_dict.get("recommended_actions", []):

@@ -48,7 +48,7 @@ def build_postmortem_markdown(
 		f"Incident window: {start or 'unknown'} to {end or 'unknown'}",
 		"",
 		"## Impact",
-		impact or "Impact not provided.",
+		impact or data.get('impact', 'Impact not provided.'),
 		"",
 		"## Timeline",
 		format_timeline_markdown(timeline_frame),
