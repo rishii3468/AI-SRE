@@ -405,7 +405,7 @@ def main() -> None:
 		top_k=sidebar_state["top_k"],
 	)
 	analysis_dict = analysis_to_dict(analysis)
-
+	
 	# Display metrics after analysis is complete
 	render_metrics(incident_frame, analysis_dict)
 

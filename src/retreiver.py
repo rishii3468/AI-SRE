@@ -47,6 +47,7 @@ def retrieve_runbooks(
 				"source": metadata.get("source"),
 			}
 		)
+
 	return hits
 
 

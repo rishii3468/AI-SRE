@@ -285,7 +285,45 @@ def analyze_incident(
 	snapshot = build_operational_snapshot(frame)
 	summary = snapshot["summary"]
 	category = _select_candidate(summary)
+	if category == "uncategorized":	
+		
+		all_sources = dict()
+		for d in runbook_hits:
+			# Use .get() to default to 0 if the source isn't in the dict yet
+			all_sources[d["source"]] = all_sources.get(d["source"], 0) + d["score"]
 
+		max_confidence_category = None
+		confidence = 0
+
+		for key, value in all_sources.items():
+			if value > confidence:
+				confidence = value  # <-- Critical: update the highest confidence tracker
+				max_confidence_category = key
+
+		category_mapping = {
+			"runbooks/redis_timeout.md": "redis_timeout",
+			"runbooks/authentication_failure.md": "authentication_failure",
+			"runbooks/api_latency.md": "api_latency",
+			"runbooks/dns_failure.md": "dns_failure",
+			"runbooks/oomkilled.md": "oomkilled",
+			"runbooks/memory_leak.md": "memory_leak",
+			"runbooks/disk_full.md": "disk_full",
+			"runbooks/network_partition.md": "network_partition",
+			"runbooks/load_balancer_failure.md": "load_balancer_failure",
+			"runbooks/deployment_failure.md": "deployment_failure",
+			"runbooks/dependency_outage.md": "dependency_outage",
+			"runbooks/message_queue_backlog.md": "message_queue_backlog",
+			"runbooks/cache_stampede.md": "cache_stampede",
+			"runbooks/service_discovery_failure.md": "service_discovery_failure",
+			"runbooks/rate_limit_exceeded.md": "rate_limit_exceeded",
+			"runbooks/ssl_certificate_expired.md": "ssl_certificate_expired",
+			"runbooks/mysql_lock_contention.md": "mysql_lock_contention",
+			"runbooks/postgres_timeout.md": "postgres_timeout",
+			"runbooks/high_cpu.md": "high_cpu",
+			"runbooks/crashloopbackoff.md": "crashloopbackoff",
+		}
+		max_confidence_category = max_confidence_category.replace("\\", "/")
+		category = category_mapping[max_confidence_category]
 	# Get top events for better root cause insight
 	top_events = milestone_events(frame, limit=3)
 	top_message = None
@@ -354,8 +392,12 @@ def analyze_with_runbooks(frame: pd.DataFrame, query: str | None = None, top_k: 
 		summary = snapshot["summary"]
 		category = _select_candidate(summary)
 		query = _get_meaningful_query_for_category(frame, category)
+		
+
+
 	
 	hits = retrieve_runbooks(query=query, k=top_k)
+
 	return analyze_incident(frame, runbook_hits=hits)
 
 
