@@ -24,7 +24,7 @@ if str(SRC_DIR) not in sys.path:
 	sys.path.insert(0, str(SRC_DIR))
 
 from aggregate import aggregate_events, build_operational_snapshot
-from analyzer import analyze_incident, analyze_with_runbooks
+from analyzer import analyze_incident, analyze_with_runbooks, analysis_to_dict
 from embeddings import ensure_vector_store
 from parser import parse_log_file, parse_log_text
 from postmortem import build_postmortem_markdown
@@ -327,11 +327,6 @@ def build_app_sidebar() -> dict[str, object]:
 	else:
 		st.sidebar.caption("Using the bundled sample incident log.")
 
-	query = st.sidebar.text_input(
-		"Runbook search query",
-		value="Redis timeout authentication failures",
-		help="Used for retrieval and optional root-cause enrichment.",
-	)
 	top_k = st.sidebar.slider("Retrieved runbooks", 1, 8, 4)
 	minimum_severity = st.sidebar.selectbox("Focus on severity", ["INFO", "WARNING", "ERROR", "CRITICAL"], index=2)
 	use_llm = st.sidebar.toggle("Enable LLM prompt generation", value=False)
@@ -356,7 +351,6 @@ def build_app_sidebar() -> dict[str, object]:
 		"source_mode": source_mode,
 		"uploaded_file": uploaded_file,
 		"pasted_text": pasted_text,
-		"query": query,
 		"top_k": top_k,
 		"minimum_severity": minimum_severity,
 		"use_llm": use_llm,
@@ -397,8 +391,6 @@ def main() -> None:
 		st.warning("No log lines were parsed. Provide a log file or paste an incident trace.")
 		st.stop()
 
-	render_metrics(incident_frame)
-
 	threshold_frame = incident_frame.copy()
 	if "severity" in threshold_frame.columns:
 		severity_order = {"INFO": 0, "WARNING": 1, "ERROR": 2, "CRITICAL": 3}
@@ -406,14 +398,16 @@ def main() -> None:
 		threshold_frame["severity_rank"] = threshold_frame["severity"].astype(str).str.upper().map(severity_order).fillna(0)
 		threshold_frame = threshold_frame.loc[threshold_frame["severity_rank"] >= threshold_value].drop(columns=["severity_rank"])
 
-	runbook_hits = retrieve_runbooks(sidebar_state["query"], k=sidebar_state["top_k"])
-	analysis = analyze_incident(
+	# Use analyze_with_runbooks to get intelligent query generation + runbook retrieval
+	analysis = analyze_with_runbooks(
 		threshold_frame,
-		runbook_hits=runbook_hits,
-		use_llm=bool(sidebar_state["use_llm"]),
-		ollama_model=sidebar_state["ollama_model"] or None,
+		query=None,  # Auto-generate based on incident
+		top_k=sidebar_state["top_k"],
 	)
-	analysis_dict = analysis.__dict__ if hasattr(analysis, "__dict__") else analysis
+	analysis_dict = analysis_to_dict(analysis)
+
+	# Display metrics after analysis is complete
+	render_metrics(incident_frame, analysis_dict)
 
 	left, right = st.columns([1.15, 0.85], gap="large")
 	with left:
@@ -448,8 +442,8 @@ def main() -> None:
 
 	with tabs[0]:
 		st.markdown('<div class="panel"><h2>Retrieved Runbooks</h2></div>', unsafe_allow_html=True)
-		if runbook_hits:
-			for hit in runbook_hits:
+		if analysis_dict.get("runbooks"):
+			for hit in analysis_dict.get("runbooks", []):
 				title = hit.get("title", "Unknown Runbook")
 				score = hit.get("score", 0.0)
 				source = hit.get("source", "")

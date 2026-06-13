@@ -169,6 +169,35 @@ def _confidence_from_frame(frame: pd.DataFrame, category: str) -> int:
 	return max(20, min(95, confidence))
 
 
+def _get_meaningful_query_for_category(frame: pd.DataFrame, category: str) -> str:
+	"""Generate a meaningful search query for runbook retrieval.
+	
+	For uncategorized events, extracts key phrases from actual messages.
+	For known categories, returns the category name.
+	"""
+	
+	if category != "uncategorized":
+		return category
+	
+	# For uncategorized events, try to extract meaningful keywords from messages
+	if "message" in frame.columns and not frame.empty:
+		# Get critical messages if available, otherwise any message
+		if "is_critical" in frame.columns:
+			critical_mask = frame["is_critical"].fillna(False)
+			messages = frame.loc[critical_mask, "message"].dropna().astype(str)
+		else:
+			messages = frame["message"].dropna().astype(str)
+		
+		if not messages.empty:
+			# Get the first message and extract a meaningful query
+			top_message = messages.iloc[0]
+			# Extract first 50 characters or until first punctuation for a reasonable query
+			query = top_message.split(".")[0].split(",")[0][:60].strip()
+			return query if query else "incident troubleshooting"
+	
+	return "incident troubleshooting"
+
+
 def analyze_incident(
 	frame: pd.DataFrame,
 	runbook_hits: list[dict[str, Any]] | None = None,
@@ -227,9 +256,20 @@ def analyze_incident(
 	)
 
 
-def analyze_with_runbooks(frame: pd.DataFrame, query: str, top_k: int = 4) -> IncidentAnalysis:
-	"""Run retrieval first, then produce an analysis."""
+def analyze_with_runbooks(frame: pd.DataFrame, query: str | None = None, top_k: int = 4) -> IncidentAnalysis:
+	"""Run retrieval first, then produce an analysis.
+	
+	If query is not provided, automatically generates one from the incident data.
+	For uncategorized events, extracts meaningful keywords from actual messages.
+	"""
 
+	# If no query provided, generate one based on the incident
+	if query is None:
+		snapshot = build_operational_snapshot(frame)
+		summary = snapshot["summary"]
+		category = _select_candidate(summary)
+		query = _get_meaningful_query_for_category(frame, category)
+	
 	hits = retrieve_runbooks(query=query, k=top_k)
 	return analyze_incident(frame, runbook_hits=hits)
 
