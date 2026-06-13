@@ -1,0 +1,176 @@
+"""Incident root-cause analysis helpers."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, asdict
+from typing import Any
+
+import pandas as pd
+
+from aggregate import build_operational_snapshot, categorize_message, summarize_events
+from parser import detect_incident_window
+from prompts import build_root_cause_prompt
+from retreiver import format_retrieved_runbooks, retrieve_runbooks
+from timeline import format_timeline_markdown, milestone_events
+
+
+CAUSE_HINTS: dict[str, dict[str, Any]] = {
+	"redis_timeout": {
+		"root_cause": "Redis connection pool exhaustion",
+		"remediation": ["Restart or scale Redis", "Increase pool size", "Review retry and timeout settings"],
+	},
+	"authentication_failure": {
+		"root_cause": "Authentication dependency latency or outage",
+		"remediation": ["Check session store health", "Inspect auth service retries", "Validate token/session validation path"],
+	},
+	"api_latency": {
+		"root_cause": "Downstream dependency slowdown causing elevated API latency",
+		"remediation": ["Inspect slow dependencies", "Check saturation and retry amplification", "Scale the bottleneck service"],
+	},
+	"oomkilled": {
+		"root_cause": "Container memory pressure caused process termination",
+		"remediation": ["Increase memory limits", "Investigate memory growth", "Restart the workload after tuning"],
+	},
+	"disk_full": {
+		"root_cause": "Disk exhaustion prevented normal writes",
+		"remediation": ["Free disk space", "Rotate or purge logs", "Expand storage capacity"],
+	},
+	"dns_failure": {
+		"root_cause": "DNS resolution failure disrupted service discovery",
+		"remediation": ["Check DNS provider health", "Validate resolver configuration", "Retry failing lookups"],
+	},
+	"network_partition": {
+		"root_cause": "Network partition or unstable connectivity between services",
+		"remediation": ["Check network paths", "Inspect firewall and routing changes", "Fail over to healthy regions"],
+	},
+	"dependency_outage": {
+		"root_cause": "Downstream dependency outage or severe degradation",
+		"remediation": ["Confirm dependency status", "Apply graceful degradation", "Trigger fallback logic"],
+	},
+}
+
+
+@dataclass(frozen=True)
+class IncidentAnalysis:
+	root_cause: str
+	confidence: int
+	evidence: list[str]
+	recommended_actions: list[str]
+	suspected_category: str
+	runbooks: list[dict[str, Any]]
+	incident_window: tuple[str | None, str | None]
+	summary: dict[str, Any]
+	timeline: list[dict[str, Any]]
+
+
+def _select_candidate(summary: dict[str, Any]) -> str:
+	category_counts = summary.get("category_counts", {}) or {}
+	if not category_counts:
+		return "uncategorized"
+	return max(category_counts.items(), key=lambda item: item[1])[0]
+
+
+def _fallback_root_cause(category: str, top_message: str | None = None) -> tuple[str, list[str]]:
+	hint = CAUSE_HINTS.get(category)
+	if hint:
+		return hint["root_cause"], list(hint["remediation"])
+
+	if top_message:
+		return f"Primary signal: {top_message}", ["Inspect the matching runbook", "Review surrounding log context", "Confirm whether the issue is still active"]
+
+	return "Insufficient evidence for a confident root cause", ["Collect more logs", "Check adjacent services", "Review monitoring dashboards"]
+
+
+def _build_evidence(frame: pd.DataFrame, limit: int = 5) -> list[str]:
+	if frame.empty:
+		return []
+
+	important = milestone_events(frame, limit=limit)
+	evidence = []
+	for row in important:
+		timestamp = row.get("timestamp")
+		timestamp_text = timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp)
+		evidence.append(f"{timestamp_text} {row.get('severity', 'INFO')} {row.get('message', '')}")
+	return evidence
+
+
+def _confidence_from_frame(frame: pd.DataFrame, category: str) -> int:
+	if frame.empty:
+		return 25
+
+	severity_boost = 10 if any(str(value).upper() in {"ERROR", "CRITICAL"} for value in frame.get("severity", [])) else 0
+	category_hits = int((frame.get("category") == category).sum()) if "category" in frame else 0
+	confidence = 35 + min(25, category_hits * 5) + severity_boost
+	return max(20, min(95, confidence))
+
+
+def analyze_incident(
+	frame: pd.DataFrame,
+	runbook_hits: list[dict[str, Any]] | None = None,
+	use_llm: bool = False,
+) -> IncidentAnalysis:
+	"""Produce a deterministic analysis from the parsed incident frame."""
+
+	runbook_hits = runbook_hits or []
+	snapshot = build_operational_snapshot(frame)
+	summary = snapshot["summary"]
+	category = _select_candidate(summary)
+
+	top_message = None
+	category_table = snapshot.get("category_table", [])
+	if category_table:
+		top_message = category_table[0].get("sample_message")
+
+	root_cause, remediation = _fallback_root_cause(category, top_message)
+	confidence = _confidence_from_frame(frame, category)
+	evidence = _build_evidence(frame)
+
+	if runbook_hits:
+		top_runbook = runbook_hits[0]
+		title = top_runbook.get("title") or top_runbook.get("metadata", {}).get("title")
+		if title:
+			evidence.append(f"Retrieved runbook: {title}")
+		remediation = remediation + [f"Review {title}" for title in [title] if title]
+		confidence = min(98, confidence + 5)
+
+	if use_llm:
+		# The project can plug an Ollama client here later; the deterministic
+		# result remains the baseline so the app works offline.
+		prompt = build_root_cause_prompt(
+			incident_summary=summary,
+			timeline=format_timeline_markdown(frame),
+			runbook_context=format_retrieved_runbooks(runbook_hits),
+			evidence=evidence,
+		)
+		evidence.append(prompt[:400])
+
+	incident_window = detect_incident_window(frame)
+	start, end = incident_window
+
+	return IncidentAnalysis(
+		root_cause=root_cause,
+		confidence=confidence,
+		evidence=evidence,
+		recommended_actions=list(dict.fromkeys(remediation)),
+		suspected_category=category,
+		runbooks=runbook_hits,
+		incident_window=(start.isoformat() if start is not None else None, end.isoformat() if end is not None else None),
+		summary=summary,
+		timeline=milestone_events(frame),
+	)
+
+
+def analyze_with_runbooks(frame: pd.DataFrame, query: str, top_k: int = 4) -> IncidentAnalysis:
+	"""Run retrieval first, then produce an analysis."""
+
+	hits = retrieve_runbooks(query=query, k=top_k)
+	return analyze_incident(frame, runbook_hits=hits)
+
+
+def analysis_to_dict(analysis: IncidentAnalysis) -> dict[str, Any]:
+	"""Serialize the analysis dataclass for JSON or markdown rendering."""
+
+	return asdict(analysis)
+
+
+__all__ = ["IncidentAnalysis", "analysis_to_dict", "analyze_incident", "analyze_with_runbooks"]
