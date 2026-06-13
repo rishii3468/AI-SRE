@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass, asdict
 from typing import Any
 
@@ -12,6 +14,11 @@ from parser import detect_incident_window
 from prompts import build_root_cause_prompt
 from retreiver import format_retrieved_runbooks, retrieve_runbooks
 from timeline import format_timeline_markdown, milestone_events
+
+try:
+	import ollama
+except ImportError:  # pragma: no cover - handled at runtime with fallback
+	ollama = None
 
 
 CAUSE_HINTS: dict[str, dict[str, Any]] = {
@@ -63,6 +70,64 @@ class IncidentAnalysis:
 	timeline: list[dict[str, Any]]
 
 
+def _build_llm_payload(
+	frame: pd.DataFrame,
+	summary: dict[str, Any],
+	runbook_hits: list[dict[str, Any]],
+	evidence: list[str],
+) -> str:
+	return build_root_cause_prompt(
+		incident_summary=summary,
+		timeline=format_timeline_markdown(frame),
+		runbook_context=format_retrieved_runbooks(runbook_hits),
+		evidence=evidence,
+	)
+
+
+def _default_ollama_model() -> str:
+	return os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+
+
+def _call_ollama(prompt: str, model: str | None = None) -> dict[str, Any] | None:
+	"""Ask Ollama for a structured incident analysis response.
+
+	The function returns a dictionary when the model responds with JSON.
+	If Ollama is unavailable or returns unparseable text, the caller can fall
+	back to the deterministic analysis already used by the app.
+	"""
+
+	if ollama is None:
+		return None
+
+	model_name = model or _default_ollama_model()
+	system_message = (
+		"You are a senior SRE incident commander. Return ONLY valid JSON with the keys "
+		"root_cause, confidence, evidence, recommended_actions, suspected_category. "
+		"confidence must be an integer between 0 and 100. evidence and recommended_actions must be arrays of strings."
+	)
+	response = ollama.chat(
+		model=model_name,
+		messages=[
+			{"role": "system", "content": system_message},
+			{"role": "user", "content": prompt},
+		],
+		format="json",
+	)
+	message = response.get("message", {}) if isinstance(response, dict) else {}
+	content = message.get("content") if isinstance(message, dict) else None
+	if not content:
+		return None
+
+	try:
+		parsed = json.loads(content)
+	except json.JSONDecodeError:
+		return None
+
+	if not isinstance(parsed, dict):
+		return None
+	return parsed
+
+
 def _select_candidate(summary: dict[str, Any]) -> str:
 	category_counts = summary.get("category_counts", {}) or {}
 	if not category_counts:
@@ -108,6 +173,7 @@ def analyze_incident(
 	frame: pd.DataFrame,
 	runbook_hits: list[dict[str, Any]] | None = None,
 	use_llm: bool = False,
+	ollama_model: str | None = None,
 ) -> IncidentAnalysis:
 	"""Produce a deterministic analysis from the parsed incident frame."""
 
@@ -133,16 +199,32 @@ def analyze_incident(
 		remediation = remediation + [f"Review {title}" for title in [title] if title]
 		confidence = min(98, confidence + 5)
 
+	llm_result: dict[str, Any] | None = None
 	if use_llm:
-		# The project can plug an Ollama client here later; the deterministic
-		# result remains the baseline so the app works offline.
-		prompt = build_root_cause_prompt(
-			incident_summary=summary,
-			timeline=format_timeline_markdown(frame),
-			runbook_context=format_retrieved_runbooks(runbook_hits),
-			evidence=evidence,
-		)
-		evidence.append(prompt[:400])
+		prompt = _build_llm_payload(frame, summary, runbook_hits, evidence)
+		llm_result = _call_ollama(prompt, model=ollama_model)
+		if llm_result:
+			root_cause = str(llm_result.get("root_cause") or root_cause)
+			try:
+				confidence = int(llm_result.get("confidence", confidence))
+			except (TypeError, ValueError):
+				pass
+
+			llm_evidence = llm_result.get("evidence", [])
+			if isinstance(llm_evidence, list):
+				evidence.extend(str(item) for item in llm_evidence if str(item).strip())
+
+			llm_actions = llm_result.get("recommended_actions", [])
+			if isinstance(llm_actions, list):
+				remediation.extend(str(item) for item in llm_actions if str(item).strip())
+
+			suspected = llm_result.get("suspected_category")
+			if suspected:
+				category = str(suspected)
+		else:
+			# Keep a trace of the prompt when Ollama is unavailable or returns
+			# non-JSON text, so the UI still shows the LLM request content.
+			evidence.append(prompt[:400])
 
 	incident_window = detect_incident_window(frame)
 	start, end = incident_window
