@@ -131,9 +131,9 @@ def _call_ollama(prompt: str, model: str | None = None) -> dict[str, Any] | None
 
 def _select_candidate(summary: dict[str, Any]) -> str:
 	category_counts = summary.get("category_counts", {}) or {}
-	if not category_counts:
-		return "uncategorized"
-	return max(category_counts.items(), key=lambda item: item[1])[0]
+	if category_counts:
+		return max(category_counts.items(), key=lambda item: item[1])[0]
+
 
 
 def _fallback_root_cause(category: str, top_message: str | None = None) -> tuple[str, list[str]]:
